@@ -70,7 +70,7 @@ int main() {
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
     hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
-    setCursorVisible(false);
+    setCursorVisible(false);git init
 
     vector<Object3D> objects;
 
