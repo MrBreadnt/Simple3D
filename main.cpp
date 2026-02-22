@@ -58,20 +58,20 @@ struct Camera {
     }
 };
 
-void setPixel(int x, int y, char c);
+void setPixel(int x, int y, char c, float z = 0);
 void clearBuffer();
 void render();
 void setCursorVisible(bool visible);
 Point2D screenCoords(Point2D point);
 Point2D projectCoords(Point3D point, Camera& camera);
-void printPoint(Point2D point);
 void printBorder();
 void movePoint(Point3D& point, Point3D vector);
 void rotateX(Point3D& point, float angle);
 void rotateY(Point3D& point, float angle);
 void rotateZ(Point3D& point, float angle);
 Point3D computeCenter(std::vector<Point3D> vertices);
-void drawLine(Point2D start, Point2D end);
+void drawLine(Point2D start, Point2D end, float z1, float z2);
+void fillTriangle(Point2D v1, Point2D v2, Point2D v3, float z1, float z2, float z3, char c);
 void drawObject(Object3D& object, Camera& camera);
 Point3D worldToCamera(Point3D worldPoint, Camera& camera);
 void rotateCamera(Camera& camera, float angle, char axis);
@@ -86,12 +86,14 @@ void moveObject(Object3D& object, Point3D vector);
 void rotateObject(Object3D& object, Point3D center, float angle, char axis);
 Object3D generateCube(Point3D position);
 Object3D generateCube(Point3D position, Point3D rotation, float scale);
+bool isFaceVisible(const Face& face, const Object3D& object, const Camera& camera);
 
 HANDLE hConsole;
 vector<CHAR_INFO> screenBuffer((WIDTH + 2) * (HEIGHT + 2));
 COORD bufferSize = {WIDTH + 2, HEIGHT + 2};
 COORD bufferCoord = {0, 0};
 SMALL_RECT writeRegion = {0, 0, WIDTH + 1, HEIGHT + 1};
+vector<float> zBuffer((WIDTH + 2) * (HEIGHT + 2));
 
 int main() {
     SetConsoleOutputCP(CP_UTF8);
@@ -105,8 +107,8 @@ int main() {
     if (loadObjFile("model.obj", model)) {
         scaleObject(model, 5);
         centerObject(model);
-        moveObject(model, {0, 2, 2});
-        //objects.push_back(model);
+        moveObject(model, {0, 2, 1});
+        objects.push_back(model);
     }
 
     objects.push_back(generateCube({0, 0, 3}));
@@ -117,7 +119,7 @@ int main() {
     objects.push_back(generateCube({0, 3, 3}));
     objects.push_back(generateCube({1, 3, 3}));
     objects.push_back(generateCube({-1, 3, 3}));
-    
+
     float moveSpeed = 0.2;
     float rotateSpeed = 2;
     
@@ -162,6 +164,26 @@ int main() {
     return 0;
 }
 
+bool isFaceVisible(const Face& face, const Object3D& object, const Camera& camera) {
+    if (face.vertexIndices.size() < 3) return false;
+    
+    const Point3D& v1 = object.vertices[face.vertexIndices[0] - 1];
+    const Point3D& v2 = object.vertices[face.vertexIndices[1] - 1];
+    const Point3D& v3 = object.vertices[face.vertexIndices[2] - 1];
+    
+    float nx = (v2.y - v1.y) * (v3.z - v1.z) - (v2.z - v1.z) * (v3.y - v1.y);
+    float ny = (v2.z - v1.z) * (v3.x - v1.x) - (v2.x - v1.x) * (v3.z - v1.z);
+    float nz = (v2.x - v1.x) * (v3.y - v1.y) - (v2.y - v1.y) * (v3.x - v1.x);
+    
+    float vx = camera.position.x - v1.x;
+    float vy = camera.position.y - v1.y;
+    float vz = camera.position.z - v1.z;
+    
+    float dot = nx * vx + ny * vy + nz * vz;
+    
+    return dot > 0;
+}
+
 Object3D generateCube(Point3D position){
     Object3D cube;
     cube.vertices = {
@@ -174,12 +196,13 @@ Object3D generateCube(Point3D position){
         {-0.5, -0.5, -0.5},
         {-0.5, 0.5, -0.5},
     };
+    
     cube.faces = {
-        {{1, 2, 3, 4}},
+        {{4, 3, 2, 1}},
         {{5, 6, 7, 8}},
         {{1, 2, 6, 5}},
-        {{3, 4, 8, 7}},
-        {{1, 4, 8, 5}},
+        {{4, 8, 7, 3}},
+        {{1, 5, 8, 4}},
         {{2, 3, 7, 6}}
     };
     cube.rotationPoint = computeCenter(cube.vertices);
@@ -199,12 +222,13 @@ Object3D generateCube(Point3D position, Point3D rotation, float scale){
         {-0.5, -0.5, -0.5},
         {-0.5, 0.5, -0.5},
     };
+    
     cube.faces = {
-        {{1, 2, 3, 4}},
+        {{4, 3, 2, 1}},
         {{5, 6, 7, 8}},
         {{1, 2, 6, 5}},
-        {{3, 4, 8, 7}},
-        {{1, 4, 8, 5}},
+        {{4, 8, 7, 3}},
+        {{1, 5, 8, 4}},
         {{2, 3, 7, 6}}
     };
     cube.rotationPoint = computeCenter(cube.vertices);
@@ -405,7 +429,7 @@ void moveCamera(Camera& camera, Point3D vector) {
 void drawText(int x, int y, const char* text) {
     int i = 0;
     while (text[i] != '\0') {
-        setPixel(x + i, y, text[i]);
+        setPixel(x + i, y, text[i], -999999);
         i++;
     }
 }
@@ -414,33 +438,37 @@ void drawObject(Object3D& object, Camera& camera){
     vector<pair<int, int>> uniqueEdges;
 
     for (const Face& face : object.faces) {
-        for (size_t i = 0; i < face.vertexIndices.size(); i++) {
-            int v1 = face.vertexIndices[i] - 1;
-            int v2 = face.vertexIndices[(i + 1) % face.vertexIndices.size()] - 1;
-            
-            if (v1 > v2) swap(v1, v2);
-            bool alreadyExists = false;
-            for (size_t j = 0; j < uniqueEdges.size(); j++) {
-                if (uniqueEdges[j].first == v1 && uniqueEdges[j].second == v2) {
-                    alreadyExists = true;
-                    break;
+        if (isFaceVisible(face, object, camera))
+            for (size_t i = 0; i < face.vertexIndices.size(); i++) {
+                int v1 = face.vertexIndices[i] - 1;
+                int v2 = face.vertexIndices[(i + 1) % face.vertexIndices.size()] - 1;
+                
+                if (v1 > v2) swap(v1, v2);
+                bool alreadyExists = false;
+                for (size_t j = 0; j < uniqueEdges.size(); j++) {
+                    if (uniqueEdges[j].first == v1 && uniqueEdges[j].second == v2) {
+                        alreadyExists = true;
+                        break;
+                    }
+                }
+                
+                if (!alreadyExists) {
+                    uniqueEdges.push_back({v1, v2});
                 }
             }
-            
-            if (!alreadyExists) {
-                uniqueEdges.push_back({v1, v2});
-            }
-        }
     }
 
     for (size_t j = 0; j < uniqueEdges.size(); j++) {
         Point3D currentPoint = object.vertices[uniqueEdges[j].first];
         Point3D nextPoint = object.vertices[uniqueEdges[j].second];
+
+        Point3D currentCamera = worldToCamera(currentPoint, camera);
+        Point3D nextCamera = worldToCamera(nextPoint, camera);
         
         Point2D currentProjected = screenCoords(projectCoords(currentPoint, camera));
         Point2D nextProjected = screenCoords(projectCoords(nextPoint, camera));
         
-        drawLine(currentProjected, nextProjected);
+        drawLine(currentProjected, nextProjected, currentCamera.z, nextCamera.z);
     }
 }
 
@@ -534,7 +562,18 @@ Point3D computeCenter(vector<Point3D> vertices) {
     return center;
 }
 
-void drawLine(Point2D start, Point2D end) {
+char getShade(float z) {
+    if (z < 2) return '@';
+    if (z < 4) return '%';
+    if (z < 5) return '#';
+    if (z < 6) return 'O';
+    if (z < 7) return '*';
+    if (z < 8) return '+';
+    if (z < 9) return ':';
+    return '.';
+}
+
+void drawLine(Point2D start, Point2D end, float z1, float z2) {
     int x1 = (int)start.x;
     int y1 = (int)start.y;
     int x2 = (int)end.x;
@@ -546,8 +585,14 @@ void drawLine(Point2D start, Point2D end) {
     int sy = y1 < y2 ? 1 : -1;
     int err = dx - dy;
     
+    float totalSteps = max(abs(x2 - x1), abs(y2 - y1));
+    float step = 0;
+    
     while (true) {
-        setPixel(x1, y1, '*');
+        float t = (totalSteps > 0) ? step / totalSteps : 0;
+        float currentZ = z1 + (z2 - z1) * t;
+        
+        setPixel(x1, y1, getShade(currentZ), currentZ);
         
         if (x1 == x2 && y1 == y2) break;
         
@@ -560,16 +605,21 @@ void drawLine(Point2D start, Point2D end) {
             err += dx;
             y1 += sy;
         }
+        step++;
     }
 }
 
-void setPixel(int x, int y, char c) {
+void setPixel(int x, int y, char c, float z) {
     int bufferX = x + 1;
     int bufferY = y + 1;
+    int index = bufferY * (WIDTH + 2) + bufferX;
     
     if (bufferX >= 0 && bufferX < WIDTH + 2 && bufferY >= 0 && bufferY < HEIGHT + 2) {
-        screenBuffer[bufferY * (WIDTH + 2) + bufferX].Char.AsciiChar = c;
-        screenBuffer[bufferY * (WIDTH + 2) + bufferX].Attributes = 7;
+        if (z < zBuffer[index]) {
+            screenBuffer[index].Char.AsciiChar = c;
+            screenBuffer[index].Attributes = 7;
+            zBuffer[index] = z;
+        }
     }
 }
 
@@ -577,6 +627,7 @@ void clearBuffer() {
     for (int i = 0; i < (WIDTH + 2) * (HEIGHT + 2); i++) {
         screenBuffer[i].Char.AsciiChar = ' ';
         screenBuffer[i].Attributes = 7;
+        zBuffer[i] = 999999;
     }
 }
 
@@ -606,18 +657,18 @@ Point2D projectCoords(Point3D point, Camera& camera) {
 
 void printBorder() {
     for (int x = 0; x < WIDTH + 2; x++) {
-        setPixel(x - 1, -1, '-');
-        setPixel(x - 1, HEIGHT, '-');
+        setPixel(x - 1, -1, '-', -999999);
+        setPixel(x - 1, HEIGHT, '-', -999999);
     }
     
-    setPixel(-1, -1, '+');
-    setPixel(WIDTH, -1, '+');
-    setPixel(-1, HEIGHT, '+');
-    setPixel(WIDTH, HEIGHT, '+');
+    setPixel(-1, -1, '+', -999999);
+    setPixel(WIDTH, -1, '+', -999999);
+    setPixel(-1, HEIGHT, '+', -999999);
+    setPixel(WIDTH, HEIGHT, '+', -999999);
     
     for (int y = 0; y < HEIGHT; y++) {
-        setPixel(-1, y, '|');
-        setPixel(WIDTH, y, '|');
+        setPixel(-1, y, '|', -999999);
+        setPixel(WIDTH, y, '|', -999999);
     }
 }
 
