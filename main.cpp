@@ -1,6 +1,4 @@
-#include <iostream>
 #include <vector>
-#include <conio.h>
 #include <windows.h>
 #include <cmath>
 
@@ -9,8 +7,8 @@
 #include <string>
 #include <algorithm>
 
-#define WIDTH 16 * 10
-#define HEIGHT 9 * 5
+#define WIDTH 16 * 16
+#define HEIGHT 9 * 8
 
 using namespace std;
 
@@ -19,7 +17,7 @@ struct Point2D {
 };
 
 struct Point3D {
-    float x, y, z;
+    float x = 0, y = 0, z = 0;
 };
 
 struct Face {
@@ -30,6 +28,7 @@ struct Object3D {
     vector<Point3D> vertices;
     vector<Face> faces;
     Point3D rotationPoint;
+    int color = 7;
 };
 
 struct Edge {
@@ -58,7 +57,7 @@ struct Camera {
     }
 };
 
-void setPixel(int x, int y, char c, float z = 0);
+void setPixel(int x, int y, char c, float z = 0, int color = 7);
 void clearBuffer();
 void render();
 void setCursorVisible(bool visible);
@@ -89,7 +88,7 @@ Object3D generateCube(Point3D position, Point3D rotation, float scale);
 bool isFaceVisible(const Face& face, const Object3D& object, const Camera& camera);
 void rotateCameraByPoint(Camera& camera, Point3D point, float angle, char axis);
 char getShade(float z);
-void fillTriangle(Point2D v1, Point2D v2, Point2D v3, float z1, float z2, float z3);
+void fillTriangle(Point2D v1, Point2D v2, Point2D v3, float z1, float z2, float z3, int color);
 void fillObject(Object3D& object, Camera& camera);
 Point3D computeFaceNormal(const Point3D& v1, const Point3D& v2, const Point3D& v3); 
 float computeFaceBrightness(const Point3D& normal, const Point3D& lightDir);
@@ -101,6 +100,7 @@ COORD bufferSize = {WIDTH + 2, HEIGHT + 2};
 COORD bufferCoord = {0, 0};
 SMALL_RECT writeRegion = {0, 0, WIDTH + 1, HEIGHT + 1};
 vector<float> zBuffer((WIDTH + 2) * (HEIGHT + 2));
+
 
 int main() {
     SetConsoleOutputCP(CP_UTF8);
@@ -117,6 +117,16 @@ int main() {
         centerObject(model);
         moveObject(model, {0, 2, -10});
         model.rotationPoint = computeCenter(model.vertices);
+        model.color = 10;
+        objects.push_back(model);
+    }
+    if (loadObjFile("model3.obj", model)) {
+        scaleObject(model, 5);
+        centerObject(model);
+        moveObject(model, {100, 2, -10});
+        rotateObject(model, model.rotationPoint, -90, 'y');
+        model.rotationPoint = computeCenter(model.vertices);
+        model.color = 13;
         objects.push_back(model);
     }
 
@@ -130,7 +140,10 @@ int main() {
     objects.push_back(generateCube({1, 3, 3}));
     objects.push_back(generateCube({-1, 3, 3}));
     float moveSpeed = 0.2;
-    float rotateSpeed = 2;
+    float rotateSpeed = 5;
+    float a = 0;
+    Point3D basePosition = computeCenter(objects[2].vertices);
+    rotateObject(objects[2], objects[2].rotationPoint, 45, 'y');
 
     moveCamera(camera, {0, 0, -2});
     //rotateCamera(camera, -45, 'x');
@@ -142,6 +155,13 @@ int main() {
         }
 
         rotateObject(objects[0], objects[0].rotationPoint, 5, 'y');
+        moveObject(objects[1], {-0.5, 0, 0});
+        Point3D center = computeCenter(objects[2].vertices);
+        float offsetY = 0.5 + sin(a) * 0.3;
+        moveObject(objects[2], {0, offsetY - (center.y - basePosition.y), 0});
+        a += 0.1;
+        if (a >= 3.14159 * 2) a = 0;
+        rotateObject(objects[2], objects[2].rotationPoint, -2, 'y');
 
         //rotateCameraByPoint(camera, {0, 0, 0}, - 5 * rotateSpeed, 'y');
         if (GetAsyncKeyState('I') & 0x8000) rotateCamera(camera, -rotateSpeed, 'x');
@@ -193,7 +213,7 @@ float computeFaceBrightness(const Point3D& normal, const Point3D& lightDir) {
     return max(0.3f, dot);
 }
 
-void fillTriangle(Point2D v1, Point2D v2, Point2D v3, float z1, float z2, float z3, float brightness) {
+void fillTriangle(Point2D v1, Point2D v2, Point2D v3, float z1, float z2, float z3, float brightness, int color) {
     if (v1.y > v2.y) { swap(v1, v2); swap(z1, z2); }
     if (v1.y > v3.y) { swap(v1, v3); swap(z1, z3); }
     if (v2.y > v3.y) { swap(v2, v3); swap(z2, z3); }
@@ -258,7 +278,7 @@ void fillTriangle(Point2D v1, Point2D v2, Point2D v3, float z1, float z2, float 
             else if (brightness > 0.2) c = ':';
             else c = '.';
             
-            setPixel(x, y, c, z);
+            setPixel(x, y, c, z, color);
         }
     }
 }
@@ -298,7 +318,7 @@ void fillObject(Object3D& object, Camera& camera) {
             Point2D pv2 = screenCoords(projectCoords(tv2, camera));
             Point2D pv3 = screenCoords(projectCoords(tv3, camera));
             
-            fillTriangle(pv1, pv2, pv3, cv1.z, cv2.z, cv3.z, brightness);
+            fillTriangle(pv1, pv2, pv3, cv1.z, cv2.z, cv3.z, brightness, object.color);
         }
     }
 }
@@ -368,6 +388,7 @@ Object3D generateCube(Point3D position){
         {{2, 3, 7, 6}}
     };
     cube.rotationPoint = computeCenter(cube.vertices);
+    cube.color = 6;
     moveObject(cube, position);
     return cube;
 }
@@ -771,7 +792,7 @@ void drawLine(Point2D start, Point2D end, float z1, float z2) {
     }
 }
 
-void setPixel(int x, int y, char c, float z) {
+void setPixel(int x, int y, char c, float z, int color) {
     int bufferX = x + 1;
     int bufferY = y + 1;
     int index = bufferY * (WIDTH + 2) + bufferX;
@@ -779,7 +800,7 @@ void setPixel(int x, int y, char c, float z) {
     if (bufferX >= 0 && bufferX < WIDTH + 2 && bufferY >= 0 && bufferY < HEIGHT + 2) {
         if (z < zBuffer[index]) {
             screenBuffer[index].Char.AsciiChar = c;
-            screenBuffer[index].Attributes = 7;
+            screenBuffer[index].Attributes = color;
             zBuffer[index] = z;
         }
     }
