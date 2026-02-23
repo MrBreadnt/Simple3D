@@ -9,8 +9,8 @@
 #include <string>
 #include <algorithm>
 
-#define WIDTH 16 * 20
-#define HEIGHT 9 * 10
+#define WIDTH 16 * 10
+#define HEIGHT 9 * 5
 
 using namespace std;
 
@@ -52,7 +52,7 @@ struct Camera {
     float fov;
     
     Camera() {
-        position = {0, 0, -5};
+        position = {0, 0, 0};
         rotation = {0, 0, 0};
         fov = 90.0f;
     }
@@ -87,6 +87,13 @@ void rotateObject(Object3D& object, Point3D center, float angle, char axis);
 Object3D generateCube(Point3D position);
 Object3D generateCube(Point3D position, Point3D rotation, float scale);
 bool isFaceVisible(const Face& face, const Object3D& object, const Camera& camera);
+void rotateCameraByPoint(Camera& camera, Point3D point, float angle, char axis);
+char getShade(float z);
+void fillTriangle(Point2D v1, Point2D v2, Point2D v3, float z1, float z2, float z3);
+void fillObject(Object3D& object, Camera& camera);
+Point3D computeFaceNormal(const Point3D& v1, const Point3D& v2, const Point3D& v3); 
+float computeFaceBrightness(const Point3D& normal, const Point3D& lightDir);
+
 
 HANDLE hConsole;
 vector<CHAR_INFO> screenBuffer((WIDTH + 2) * (HEIGHT + 2));
@@ -103,14 +110,17 @@ int main() {
 
     vector<Object3D> objects;
     Camera camera;
+
     Object3D model;
-    if (loadObjFile("model.obj", model)) {
+    if (loadObjFile("model2.obj", model)) {
         scaleObject(model, 5);
         centerObject(model);
-        moveObject(model, {0, 2, 1});
+        moveObject(model, {0, 2, -10});
+        model.rotationPoint = computeCenter(model.vertices);
         objects.push_back(model);
     }
 
+    objects.push_back(generateCube({0, 0, 0,}));
     objects.push_back(generateCube({0, 0, 3}));
     objects.push_back(generateCube({1, 0, 3}));
     objects.push_back(generateCube({-1, 0, 3}));
@@ -119,17 +129,21 @@ int main() {
     objects.push_back(generateCube({0, 3, 3}));
     objects.push_back(generateCube({1, 3, 3}));
     objects.push_back(generateCube({-1, 3, 3}));
-
     float moveSpeed = 0.2;
     float rotateSpeed = 2;
+
+    moveCamera(camera, {0, 0, -2});
+    //rotateCamera(camera, -45, 'x');
     
     while (true) {
         clearBuffer();
-
         for(auto& object : objects){
-            drawObject(object, camera);
+            fillObject(object, camera);
         }
 
+        rotateObject(objects[0], objects[0].rotationPoint, 5, 'y');
+
+        //rotateCameraByPoint(camera, {0, 0, 0}, - 5 * rotateSpeed, 'y');
         if (GetAsyncKeyState('I') & 0x8000) rotateCamera(camera, -rotateSpeed, 'x');
         if (GetAsyncKeyState('K') & 0x8000) rotateCamera(camera, rotateSpeed, 'x');
         
@@ -142,7 +156,6 @@ int main() {
         if (GetAsyncKeyState('D') & 0x8000) moveCamera(camera, {moveSpeed, 0, 0});
         if (GetAsyncKeyState('Q') & 0x8000) moveCamera(camera, {0, -moveSpeed, 0});
         if (GetAsyncKeyState('E') & 0x8000) moveCamera(camera, {0, moveSpeed, 0});
-        
         if (GetAsyncKeyState(VK_OEM_PLUS) & 0x8000 || GetAsyncKeyState(VK_ADD) & 0x8000) 
             camera.fov = min(150.0f, camera.fov + 5);
         
@@ -162,6 +175,155 @@ int main() {
 
     setCursorVisible(true);
     return 0;
+}
+
+Point3D computeFaceNormal(const Point3D& v1, const Point3D& v2, const Point3D& v3) {
+    float nx = (v2.y - v1.y) * (v3.z - v1.z) - (v2.z - v1.z) * (v3.y - v1.y);
+    float ny = (v2.z - v1.z) * (v3.x - v1.x) - (v2.x - v1.x) * (v3.z - v1.z);
+    float nz = (v2.x - v1.x) * (v3.y - v1.y) - (v2.y - v1.y) * (v3.x - v1.x);
+    
+    return {nx, ny, nz};
+}
+
+float computeFaceBrightness(const Point3D& normal, const Point3D& lightDir) {
+    float length = sqrt(normal.x * normal.x + normal.y * normal.y + normal.z * normal.z);
+    if (length < 0.001) return 0.5f;
+    
+    float dot = (normal.x * lightDir.x + normal.y * lightDir.y + normal.z * lightDir.z) / length;
+    return max(0.3f, dot);
+}
+
+void fillTriangle(Point2D v1, Point2D v2, Point2D v3, float z1, float z2, float z3, float brightness) {
+    if (v1.y > v2.y) { swap(v1, v2); swap(z1, z2); }
+    if (v1.y > v3.y) { swap(v1, v3); swap(z1, z3); }
+    if (v2.y > v3.y) { swap(v2, v3); swap(z2, z3); }
+
+    int y1 = (int)ceil(v1.y);
+    int y2 = (int)ceil(v2.y);
+    int y3 = (int)ceil(v3.y);
+
+    int screen_y_start = max(0, y1);
+    int screen_y_end = min(HEIGHT - 1, y3 - 1);
+
+    if (screen_y_start > screen_y_end) return;
+
+    float dy12 = v2.y - v1.y;
+    float dy13 = v3.y - v1.y;
+    float dy23 = v3.y - v2.y;
+
+    float dx12 = (dy12 > 0) ? (v2.x - v1.x) / dy12 : 0;
+    float dz12 = (dy12 > 0) ? (z2 - z1) / dy12 : 0;
+    
+    float dx13 = (dy13 > 0) ? (v3.x - v1.x) / dy13 : 0;
+    float dz13 = (dy13 > 0) ? (z3 - z1) / dy13 : 0;
+
+    float dx23 = (dy23 > 0) ? (v3.x - v2.x) / dy23 : 0;
+    float dz23 = (dy23 > 0) ? (z3 - z2) / dy23 : 0;
+
+    for (int y = screen_y_start; y <= screen_y_end; y++) {
+        bool is_upper_part = y < y2;
+        
+        float x_a, z_a, x_b, z_b;
+        
+        float offset13 = (float)y - v1.y;
+        x_a = v1.x + offset13 * dx13;
+        z_a = z1 + offset13 * dz13;
+
+        if (is_upper_part) {
+            float offset12 = (float)y - v1.y;
+            x_b = v1.x + offset12 * dx12;
+            z_b = z1 + offset12 * dz12;
+        } else {
+            float offset23 = (float)y - v2.y;
+            x_b = v2.x + offset23 * dx23;
+            z_b = z2 + offset23 * dz23;
+        }
+
+        if (x_a > x_b) {
+            swap(x_a, x_b);
+            swap(z_a, z_b);
+        }
+
+        int x_start = max(0, (int)ceil(x_a));
+        int x_end = min(WIDTH - 1, (int)ceil(x_b) - 1);
+
+        for (int x = x_start; x <= x_end; x++) {
+            float factor = (x_b != x_a) ? (x - x_a) / (x_b - x_a) : 0;
+            float z = z_a + factor * (z_b - z_a);
+            
+            char c;
+            if (brightness > 0.8) c = '@';
+            else if (brightness > 0.6) c = '#';
+            else if (brightness > 0.4) c = '+';
+            else if (brightness > 0.2) c = ':';
+            else c = '.';
+            
+            setPixel(x, y, c, z);
+        }
+    }
+}
+
+void fillObject(Object3D& object, Camera& camera) {
+    Point3D lightDir = {-1, 1, 1};
+    
+    for (const Face& face : object.faces) {
+        if (!isFaceVisible(face, object, camera)) continue;
+        
+        int i1 = face.vertexIndices[0] - 1;
+        int i2 = face.vertexIndices[1] - 1;
+        int i3 = face.vertexIndices[2] - 1;
+        
+        Point3D v1 = object.vertices[i1];
+        Point3D v2 = object.vertices[i2];
+        Point3D v3 = object.vertices[i3];
+        
+        Point3D normal = computeFaceNormal(v1, v2, v3);
+        
+        float brightness = computeFaceBrightness(normal, lightDir);
+        
+        for (size_t i = 1; i < face.vertexIndices.size() - 1; i++) {
+            int ti1 = face.vertexIndices[0] - 1;
+            int ti2 = face.vertexIndices[i] - 1;
+            int ti3 = face.vertexIndices[i + 1] - 1;
+            
+            Point3D tv1 = object.vertices[ti1];
+            Point3D tv2 = object.vertices[ti2];
+            Point3D tv3 = object.vertices[ti3];
+            
+            Point3D cv1 = worldToCamera(tv1, camera);
+            Point3D cv2 = worldToCamera(tv2, camera);
+            Point3D cv3 = worldToCamera(tv3, camera);
+            
+            Point2D pv1 = screenCoords(projectCoords(tv1, camera));
+            Point2D pv2 = screenCoords(projectCoords(tv2, camera));
+            Point2D pv3 = screenCoords(projectCoords(tv3, camera));
+            
+            fillTriangle(pv1, pv2, pv3, cv1.z, cv2.z, cv3.z, brightness);
+        }
+    }
+}
+
+void rotateCameraByPoint(Camera& camera, Point3D point, float angle, char axis) {
+    Point3D relativePos = {
+        camera.position.x - point.x,
+        camera.position.y - point.y,
+        camera.position.z - point.z
+    };
+    
+    moveCamera(camera, {point.x - camera.position.x, 
+                        point.y - camera.position.y, 
+                        point.z - camera.position.z});
+    
+    rotateCamera(camera, angle, axis);
+    
+    Point3D rotatedRelative = relativePos;
+    rotatePoint(rotatedRelative, {0, 0, 0}, angle, axis);
+    
+    camera.position = {
+        point.x + rotatedRelative.x,
+        point.y + rotatedRelative.y,
+        point.z + rotatedRelative.z
+    };
 }
 
 bool isFaceVisible(const Face& face, const Object3D& object, const Camera& camera) {
